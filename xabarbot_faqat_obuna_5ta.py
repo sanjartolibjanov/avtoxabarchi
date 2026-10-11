@@ -585,7 +585,8 @@ async def ask_text(message: Message):
         "{randomnik}\n"
         "{randomsumma}\n"
         "{randomkarta}\n"
-        "{vaqt}\n\n"
+        "{vaqt}\n"
+        "{raundrandom]\n\n"
         "Xabar DEMO/TEST deb ko‘rsatiladi."
     )
 
