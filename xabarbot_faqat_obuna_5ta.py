@@ -15,9 +15,10 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    ReplyKeyboardRemove,
     FSInputFile,
 )
-from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
 # =========================
@@ -274,18 +275,21 @@ def make_text(ch: dict):
 
 
 # =========================
-# ASOSIY (REPLY) KLAVIATURA
+# ASOSIY PANEL (INLINE)
 # =========================
-def admin_keyboard():
-    kb = ReplyKeyboardBuilder()
+PANEL_TEXT = "👤 Sizning shaxsiy panelingiz\n\nKerakli bo‘limni tanlang:"
 
-    kb.button(text="📢 Kanallarim")
-    kb.button(text="➕ Kanal ulash")
-    kb.button(text="📊 Statistika")
-    kb.button(text="🔐 Majburiy obuna")
+
+def admin_keyboard():
+    kb = InlineKeyboardBuilder()
+
+    kb.button(text="📢 Kanallarim", callback_data="list")
+    kb.button(text="➕ Kanal ulash", callback_data="add_ch")
+    kb.button(text="📊 Statistika", callback_data="m:stat")
+    kb.button(text="🔐 Majburiy obuna", callback_data="m:sub")
 
     kb.adjust(2, 2)
-    return kb.as_markup(resize_keyboard=True)
+    return kb.as_markup()
 
 
 # =========================
@@ -428,6 +432,7 @@ def channels_list_kb(user_settings):
         mark = "🟢" if ch.get("running") else "🔴"
         kb.button(text=f"{mark} {ch.get('name', cid)}", callback_data=f"ch:{cid}")
     kb.button(text="➕ Kanal ulash", callback_data="add_ch")
+    kb.button(text="⬅️ Panel", callback_data="menu")
     kb.adjust(1)
     return kb.as_markup()
 
@@ -584,40 +589,80 @@ async def panel_command(message: Message):
         return
 
     admin_waiting.pop(message.from_user.id, None)
-    await message.answer(
-        "👤 Sizning shaxsiy panelingiz\n\nKerakli bo‘limni tanlang:",
-        reply_markup=admin_keyboard(),
-    )
+
+    # Eski pastki (reply) tugmalar qolib ketgan bo'lsa, olib tashlaymiz.
+    try:
+        tmp = await message.answer("🔄", reply_markup=ReplyKeyboardRemove())
+        await tmp.delete()
+    except Exception:
+        pass
+
+    await message.answer(PANEL_TEXT, reply_markup=admin_keyboard())
 
 
 # =========================
-# ASOSIY TUGMALAR
+# ASOSIY PANEL CALLBACKLARI
 # =========================
-@router.message(F.text == "📢 Kanallarim")
-async def my_channels(message: Message):
-    if not is_admin(message):
-        return
-    admin_waiting.pop(message.from_user.id, None)
+@router.callback_query(F.data == "menu")
+async def cb_menu(callback: CallbackQuery):
+    admin_waiting.pop(callback.from_user.id, None)
+    await edit_or_send(callback, PANEL_TEXT, admin_keyboard())
+    await callback.answer()
 
-    us = get_settings(message.from_user.id)
-    if not us["channels"]:
-        await message.answer(
-            "Hali kanal ulanmagan.\n\n➕ Kanal ulash tugmasini bosing.",
-            reply_markup=channels_list_kb(us),
+
+@router.callback_query(F.data == "m:stat")
+async def cb_main_stat(callback: CallbackQuery):
+    admin_waiting.pop(callback.from_user.id, None)
+
+    us = get_settings(callback.from_user.id)
+    channels = us.get("channels", {})
+
+    back = InlineKeyboardBuilder()
+    back.button(text="⬅️ Panel", callback_data="menu")
+
+    if not channels:
+        await edit_or_send(
+            callback,
+            "📊 Statistika\n\nHali kanal ulanmagan.",
+            back.as_markup(),
         )
+        await callback.answer()
         return
 
-    await message.answer(
-        "📢 Kanallaringiz. Sozlash uchun birini tanlang:",
-        reply_markup=channels_list_kb(us),
+    total = sum(int(c.get("sent_count", 0)) for c in channels.values())
+    lines = ["📊 Umumiy statistika\n", f"Jami yuborilgan: {total}\n"]
+
+    for cid, ch in channels.items():
+        lines.append(
+            f"📢 {ch.get('name')}: {ch.get('sent_count', 0)} ta | "
+            f"{'ON 🟢' if ch.get('running') else 'OFF 🔴'} | "
+            f"reja: {schedules_text(ch)}"
+        )
+
+    await edit_or_send(callback, "\n".join(lines), back.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "m:sub")
+async def cb_main_sub(callback: CallbackQuery):
+    get_settings(callback.from_user.id)
+    admin_waiting[callback.from_user.id] = {"action": "subscription", "cid": None}
+
+    await callback.answer()
+    await callback.message.answer(
+        "🔐 Majburiy obuna — 1 tadan 5 tagacha kanal.\n\n"
+        "Har bir kanal uchun 2 qator yozing:\n"
+        "1) Kanal ID\n"
+        "2) Kanal havolasi\n\n"
+        "Masalan, 3 ta kanal:\n\n"
+        "-1001111111111\n"
+        "https://t.me/kanal1\n"
+        "-1002222222222\n"
+        "https://t.me/kanal2\n"
+        "-1003333333333\n"
+        "https://t.me/kanal3\n\n"
+        "Bot barcha kanallarga obunani tekshiradi."
     )
-
-
-@router.message(F.text == "➕ Kanal ulash")
-async def add_channel_btn(message: Message):
-    if not is_admin(message):
-        return
-    await ask_new_channel(message, message.from_user.id)
 
 
 async def ask_new_channel(message: Message, user_id: int):
